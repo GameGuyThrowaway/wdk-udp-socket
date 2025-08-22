@@ -48,41 +48,6 @@ most concurrency safety, wdk-mutex.
 
 TODO: Link the Ferrum driver once it is published.
 
-## Host a UDP Socket on 127.0.0.1:54070
-
-This example attempts to host a socket at IP: 127.0.0.1, Port: 54070, and then close it.
-
-```rust
-extern crate alloc;
-use alloc::vec::Vec;
-use wdk_udp_socket::{SocketIdentifier, UdpSocket, IP};
-
-fn write_string() {
-    match UdpSocket::new(IP([127, 0, 0, 1]), 54070, socket_read_handler) {
-        Ok(identifier) => {
-            let mutex_ptr = GlobalSockets::get_socket(identifier).unwrap();
-            let socket_locked = unsafe { (*mutex_ptr).lock().unwrap() };
-
-            let (ip, port) = socket_locked.get_address();
-            println!(
-                "Opened a UDP Socket on: {:?}:{} with ID: {:?}",
-                ip,
-                port,
-                identifier
-            );
-
-            GlobalSockets::close_socket(identifier);
-            println!("Closed the socket");
-        }
-        Err(e) => println!("Failed to create Socket: {:?}", e),
-    }
-}
-
-fn socket_read_handler(_identifier: SocketIdentifier, _data: &Vec<u8>, _ip: IP, _port: u16) {
-    // Reads are ignored in this example.
-}
-```
-
 ## Hosting a socket, and echoing data
 
 This example attempts to host a socket at IP: 127.0.0.1, Port: 54070, and echo any data received on it.
