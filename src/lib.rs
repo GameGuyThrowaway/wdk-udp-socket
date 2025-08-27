@@ -1320,7 +1320,6 @@ unsafe extern "C" fn datagram_received_workitem_routine_unsafe(
 /// * `context` - A valid WorkItemContext pointer, as per the ExQueueWorkItem
 ///   call in `receive_from_event_handler`.
 ///
-///
 fn datagram_received_workitem_routine(context_ptr: PVOID) {
     if context_ptr.is_null() {
         return;
