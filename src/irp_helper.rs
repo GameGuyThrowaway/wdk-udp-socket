@@ -38,7 +38,7 @@ type ResultAssigner<T> = Option<fn(&mut CompletionRoutineContext<T>, u64)>;
 /// and blocking until it completes.
 ///
 /// If the IRP passed via `irp_call` is never completed, this function will
-/// never returned.
+/// never return.
 ///
 /// **ONLY for use with WSK IRP calls.**
 ///
@@ -104,11 +104,12 @@ where
     //         1. `irp` is a valid pointer to a valid IRP.
     //         2. `CompletionRoutine` is either None, or contains a
     //            guaranteed safe function.
-    //         3. `Context` is allowed to be null.
+    //         3. `context_ptr` is a pointer to a CompletionRoutineContext with
+    //            a valid lifetime.
     unsafe {
         IoSetCompletionRoutine(
             irp,
-            Some(irp_handler_completion_routine::<T>),
+            Some(irp_handler_completion_routine_unsafe::<T>),
             context_ptr as *mut _,
             true as BOOLEAN,
             true as BOOLEAN,
@@ -177,6 +178,17 @@ where
 }
 
 ///
+/// A wrapper around the `irp_handler_completion_routine`, which ensures safety.
+/// 
+unsafe extern "C" fn irp_handler_completion_routine_unsafe<T: Clone>(
+    device_object: PDEVICE_OBJECT,
+    irp_ptr: PIRP,
+    context: PVOID,
+) -> NTSTATUS {
+    irp_handler_completion_routine::<T>(device_object, irp_ptr, context)
+}
+
+///
 /// `irp_handler_completion_routine` is the completion routine for
 /// `irp_helper::call_irp_blocking`. Its behavior is tightly coupled with the
 /// function to behave safely.
@@ -197,7 +209,7 @@ where
 /// * `NTSTATUS` - The status of the call. This should always be
 ///   STATUS_MORE_PROCESSING_REQUIRED, as is required for all WSK IRPs.
 ///
-unsafe extern "C" fn irp_handler_completion_routine<T: Clone>(
+fn irp_handler_completion_routine<T: Clone>(
     _device_object: PDEVICE_OBJECT,
     irp_ptr: PIRP,
     context: PVOID,
