@@ -402,7 +402,7 @@ type AsyncReadCallback = fn(identifier: SocketIdentifier, data: &Vec<u8>, ip: IP
 
 ///
 /// All the data representing a UdpSocket.
-/// 
+///
 pub struct UdpSocket {
     /// The Socket's current IPV4 address.
     ip: IP,
@@ -486,7 +486,7 @@ impl UdpSocket {
                 // undefined behavior, likely mem leak on socket struct.
                 Self::close_socket(socket_ptr);
                 return Err(NewSocketErr::FailedToAddToGlobalSockets);
-            },
+            }
         };
 
         // SAFETY: This is safe because:
@@ -798,11 +798,11 @@ impl UdpSocket {
     ///
     /// `close_socket` attempts to close a socket. The passed socket pointer should
     /// be dropped after this function returns.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `socket_ptr` - The socket to close.
-    /// 
+    ///
     fn close_socket(socket_ptr: PWSK_SOCKET) {
         if socket_ptr.is_null() {
             return;
@@ -1180,7 +1180,7 @@ fn vec_from_wsk_buf(wsk_buf: &WSK_BUF) -> Result<Vec<u8>, WskBufReadErr> {
 
 ///
 /// A wrapper around the `receive_from_event_handler`, which ensures safety.
-/// 
+///
 unsafe extern "C" fn receive_from_event_handler_unsafe(
     context: PVOID,
     flags: u32,
@@ -1295,14 +1295,11 @@ struct WorkItemContext {
     port: u16,
 }
 
-
 ///
 /// A wrapper around the `datagram_received_workitem_routine`, which ensures
 /// safety.
-/// 
-unsafe extern "C" fn datagram_received_workitem_routine_unsafe(
-    context: PVOID,
-) {
+///
+unsafe extern "C" fn datagram_received_workitem_routine_unsafe(context: PVOID) {
     datagram_received_workitem_routine(context)
 }
 
@@ -1310,7 +1307,7 @@ unsafe extern "C" fn datagram_received_workitem_routine_unsafe(
 /// `datagram_received_workitem_routine` is the callback function for datagram
 /// receive related work items. Its behavior matches the invariant described by
 /// the ExQueueWorkItem call in `receive_from_event_handler`.
-/// 
+///
 /// Because this function is only called from a work item queue finishing, it
 /// runs at IRQL_PASSIVE_LEVEL, ensuring the callback is run at
 /// IRQL_PASSIVE_LEVEL.

@@ -179,7 +179,7 @@ where
 
 ///
 /// A wrapper around the `irp_handler_completion_routine`, which ensures safety.
-/// 
+///
 unsafe extern "C" fn irp_handler_completion_routine_unsafe<T: Clone>(
     device_object: PDEVICE_OBJECT,
     irp_ptr: PIRP,
