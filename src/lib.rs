@@ -35,6 +35,8 @@ use wdk_sys::{
 use irp_helper::{call_irp_blocking, BlockingIrpErr};
 use misc::MmGetSystemAddressForMdlSafe;
 
+use crate::misc::ExInitializeWorkItem;
+
 mod irp_helper;
 mod misc;
 
@@ -1265,10 +1267,21 @@ fn receive_from_event_handler(
                 context.ip = ip;
                 context.port = port;
 
-                context.work_item.List.Flink = null_mut();
-                context.work_item.Parameter = context_ptr as *mut _;
-                context.work_item.WorkerRoutine = Some(datagram_received_workitem_routine_unsafe);
+                // SAFETY: This is safe because:
+                //         1. `WorkItem` is a valid PWORK_QUEUE_ITEM.
+                //         2. `context_ptr` is a WdkAllocator allocated WorkItemContext,
+                //            as required by the invariant defined in
+                //            `rxchar_workitem_routine`.
+                unsafe {
+                    ExInitializeWorkItem(
+                        &mut context.work_item as PWORK_QUEUE_ITEM,
+                        Some(datagram_received_workitem_routine_unsafe),
+                        context_ptr as PVOID,
+                    );
+                }
 
+                // SAFETY: This is safe because:
+                //         `WorkItem` is a valid PWORK_QUEUE_ITEM.
                 unsafe {
                     ExQueueWorkItem(&mut context.work_item as PWORK_QUEUE_ITEM, DelayedWorkQueue);
                 }
@@ -1314,8 +1327,8 @@ unsafe extern "C" fn datagram_received_workitem_routine_unsafe(context: PVOID) {
 ///
 /// # Arguments:
 ///
-/// * `context` - A valid WorkItemContext pointer, as per the ExQueueWorkItem
-///   call in `receive_from_event_handler`.
+/// * `context_ptr` - A valid WorkItemContext pointer, as per the
+///   ExQueueWorkItem call in `receive_from_event_handler`.
 ///
 fn datagram_received_workitem_routine(context_ptr: PVOID) {
     if context_ptr.is_null() {

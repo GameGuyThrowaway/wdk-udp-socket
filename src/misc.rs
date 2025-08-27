@@ -12,8 +12,8 @@ use core::ptr::null_mut;
 use wdk_sys::{
     ntddk::MmMapLockedPagesSpecifyCache, BOOLEAN, MDL_MAPPED_TO_SYSTEM_VA,
     MDL_SOURCE_IS_NONPAGED_POOL, PIO_COMPLETION_ROUTINE, PIO_STACK_LOCATION, PIRP, PMDL, PVOID,
-    SL_INVOKE_ON_CANCEL, SL_INVOKE_ON_ERROR, SL_INVOKE_ON_SUCCESS, ULONG,
-    _MEMORY_CACHING_TYPE::MmCached, _MODE::KernelMode,
+    PWORKER_THREAD_ROUTINE, PWORK_QUEUE_ITEM, SL_INVOKE_ON_CANCEL, SL_INVOKE_ON_ERROR,
+    SL_INVOKE_ON_SUCCESS, ULONG, _MEMORY_CACHING_TYPE::MmCached, _MODE::KernelMode,
 };
 
 pub unsafe fn IoSetCompletionRoutine(
@@ -75,4 +75,14 @@ pub unsafe fn MmGetSystemAddressForMdlSafe(Mdl: PMDL, Priority: ULONG) -> PVOID 
             Priority,
         );
     }
+}
+
+pub unsafe fn ExInitializeWorkItem(
+    Item: PWORK_QUEUE_ITEM,
+    Routine: PWORKER_THREAD_ROUTINE,
+    Context: PVOID,
+) {
+    (*Item).WorkerRoutine = Routine;
+    (*Item).Parameter = Context;
+    (*Item).List.Flink = null_mut();
 }
