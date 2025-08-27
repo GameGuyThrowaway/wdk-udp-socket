@@ -51,7 +51,7 @@ const WSK_APP_DISPATCH: WSK_CLIENT_DISPATCH = WSK_CLIENT_DISPATCH {
 };
 
 const WSK_CLIENT_DATAGRAM_DISPATCH: WSK_CLIENT_DATAGRAM_DISPATCH = WSK_CLIENT_DATAGRAM_DISPATCH {
-    WskReceiveFromEvent: Some(receive_from_event_handler),
+    WskReceiveFromEvent: Some(receive_from_event_handler_unsafe),
 };
 
 /// Used because the WdkAllocator does not use layouts in deallocation, but the
@@ -400,6 +400,9 @@ pub enum SocketWriteErr {
 ///
 type AsyncReadCallback = fn(identifier: SocketIdentifier, data: &Vec<u8>, ip: IP, port: u16);
 
+///
+/// All the data representing a UdpSocket.
+/// 
 pub struct UdpSocket {
     /// The Socket's current IPV4 address.
     ip: IP,
@@ -424,15 +427,6 @@ impl UdpSocket {
     /// accurate. After this function returns success, the caller should read
     /// the IP and Port back off of the newly created port.
     ///
-    /// TODO: Currently if a socket fails to bind, get address, enable
-    /// callbacks, or add to the global socket array, it does not properly close
-    /// the now created socket, leading to it not only leaking, but preventing
-    /// the DeRegister call from ever completing, and thus the driver from ever
-    /// unloading.
-    ///
-    /// This didn't seem so bad until I realize that if the driver blocks
-    /// indefinitely when unloading, that may have some large consequences.
-    ///
     /// # Arguments:
     ///
     /// * `ip` - The 4 byte IPV4, in the form of [127, 0, 0, 1].
@@ -454,21 +448,31 @@ impl UdpSocket {
 
         let identifier = GlobalSockets::reserve_slot().ok_or(NewSocketErr::FailedToReserveSlot)?;
 
-        let socket = Self::make_socket(identifier, read_callback)
+        let socket_ptr = Self::make_socket(identifier, read_callback)
             .map_err(|e| NewSocketErr::FailedToMakeSocket(e))?;
 
-        Self::bind_socket(socket, ip, port).map_err(|e| NewSocketErr::FailedToBindSocket(e))?;
+        if let Err(e) = Self::bind_socket(socket_ptr, ip, port) {
+            Self::close_socket(socket_ptr);
+            return Err(NewSocketErr::FailedToBindSocket(e));
+        }
 
-        let (ip, port) = Self::get_socket_address(socket)
-            .map_err(|e| NewSocketErr::FailedToGetSocketAddress(e))?;
+        let (ip, port) = match Self::get_socket_address(socket_ptr) {
+            Ok(address) => address,
+            Err(e) => {
+                Self::close_socket(socket_ptr);
+                return Err(NewSocketErr::FailedToGetSocketAddress(e));
+            }
+        };
 
-        Self::enable_receive_callback(socket)
-            .map_err(|e| NewSocketErr::FailedToEnableCallback(e))?;
+        if let Err(e) = Self::enable_receive_callback(socket_ptr) {
+            Self::close_socket(socket_ptr);
+            return Err(NewSocketErr::FailedToEnableCallback(e));
+        }
 
         let socket = UdpSocket {
             ip,
             port,
-            socket_ptr: socket,
+            socket_ptr,
             identifier: None,
         };
 
@@ -476,8 +480,14 @@ impl UdpSocket {
         let mutex_ptr = Box::into_raw(mutex);
 
         GlobalSockets::insert_socket(identifier, mutex_ptr);
-        let mutex_ptr = GlobalSockets::get_socket(identifier)
-            .ok_or(NewSocketErr::FailedToAddToGlobalSockets)?;
+        let mutex_ptr = match GlobalSockets::get_socket(identifier) {
+            Some(mutex_ptr) => mutex_ptr,
+            None => {
+                // undefined behavior, likely mem leak on socket struct.
+                Self::close_socket(socket_ptr);
+                return Err(NewSocketErr::FailedToAddToGlobalSockets);
+            },
+        };
 
         // SAFETY: This is safe because:
         //         `mutex_ptr` is a confirmed valid KMutex pointer.
@@ -617,35 +627,7 @@ impl UdpSocket {
     /// by `GlobalSockets::close_socket`.
     ///
     fn close(&self) {
-        if self.socket_ptr.is_null() {
-            return;
-        }
-
-        // SAFETY: This is safe because:
-        //         `self.socket` has been verified as a valid pointer.
-        let socket = unsafe { &*self.socket_ptr };
-
-        let dispatch = socket.Dispatch as PWSK_PROVIDER_BASIC_DISPATCH;
-        if dispatch.is_null() {
-            return;
-        }
-
-        // SAFETY: This is safe because:
-        //         `dispatch` has been verified as a valid pointer.
-        let dispatch = unsafe { &*dispatch };
-        if dispatch.WskCloseSocket.is_none() {
-            return;
-        }
-
-        let _ = call_irp_blocking::<(), _>(
-            |irp, _ctx| {
-                // SAFETY: This is safe because:
-                //         1. `self.socket` is a valid PWSK_SOCKET.
-                //         2. `irp` is a valid PIRP, properly freed after use.
-                unsafe { dispatch.WskCloseSocket.unwrap()(self.socket_ptr, irp) }
-            },
-            None, // result is already stored in context.data
-        );
+        Self::close_socket(self.socket_ptr);
     }
 }
 
@@ -811,6 +793,46 @@ impl UdpSocket {
         }
 
         Ok(socket)
+    }
+
+    ///
+    /// `close_socket` attempts to close a socket. The passed socket pointer should
+    /// be dropped after this function returns.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `socket_ptr` - The socket to close.
+    /// 
+    fn close_socket(socket_ptr: PWSK_SOCKET) {
+        if socket_ptr.is_null() {
+            return;
+        }
+
+        // SAFETY: This is safe because:
+        //         `self.socket` has been verified as a valid pointer.
+        let socket = unsafe { &*socket_ptr };
+
+        let dispatch = socket.Dispatch as PWSK_PROVIDER_BASIC_DISPATCH;
+        if dispatch.is_null() {
+            return;
+        }
+
+        // SAFETY: This is safe because:
+        //         `dispatch` has been verified as a valid pointer.
+        let dispatch = unsafe { &*dispatch };
+        if dispatch.WskCloseSocket.is_none() {
+            return;
+        }
+
+        let _ = call_irp_blocking::<(), _>(
+            |irp, _ctx| {
+                // SAFETY: This is safe because:
+                //         1. `self.socket` is a valid PWSK_SOCKET.
+                //         2. `irp` is a valid PIRP, properly freed after use.
+                unsafe { dispatch.WskCloseSocket.unwrap()(socket_ptr, irp) }
+            },
+            None, // result is already stored in context.data
+        );
     }
 
     ///
@@ -1157,6 +1179,17 @@ fn vec_from_wsk_buf(wsk_buf: &WSK_BUF) -> Result<Vec<u8>, WskBufReadErr> {
 }
 
 ///
+/// A wrapper around the `receive_from_event_handler`, which ensures safety.
+/// 
+unsafe extern "C" fn receive_from_event_handler_unsafe(
+    context: PVOID,
+    flags: u32,
+    data_indication: PWSK_DATAGRAM_INDICATION,
+) -> NTSTATUS {
+    receive_from_event_handler(context, flags, data_indication)
+}
+
+///
 /// `receive_from_event_handler` is the callback function for datagram sockets'
 /// WskReceiveFromEvent. Its behavior matches the invariant described by the
 /// WskSocket call.
@@ -1171,7 +1204,7 @@ fn vec_from_wsk_buf(wsk_buf: &WSK_BUF) -> Result<Vec<u8>, WskBufReadErr> {
 ///
 /// * `NTSTATUS` - See PFN_WSK_RECEIVE_FROM_EVENT documentation.
 ///
-unsafe extern "C" fn receive_from_event_handler(
+fn receive_from_event_handler(
     context: PVOID,
     _flags: u32,
     data_indication: PWSK_DATAGRAM_INDICATION,
@@ -1187,6 +1220,9 @@ unsafe extern "C" fn receive_from_event_handler(
     let socket_context = unsafe { &*(context as *const WskSocketContext) };
 
     if data_indication.is_null() {
+        // "If [data_indication] is NULL, the socket is no longer functional and
+        //  the WSK application must call the WskCloseSocket function to close
+        //  the socket as soon as possible." - PFN_WSK_RECEIVE_FROM_EVENT MSDN
         GlobalSockets::close_socket(socket_context.identifier);
         return STATUS_SUCCESS;
     }
@@ -1231,7 +1267,7 @@ unsafe extern "C" fn receive_from_event_handler(
 
                 context.work_item.List.Flink = null_mut();
                 context.work_item.Parameter = context_ptr as *mut _;
-                context.work_item.WorkerRoutine = Some(datagram_received_workitem_routine);
+                context.work_item.WorkerRoutine = Some(datagram_received_workitem_routine_unsafe);
 
                 unsafe {
                     ExQueueWorkItem(&mut context.work_item as PWORK_QUEUE_ITEM, DelayedWorkQueue);
@@ -1259,6 +1295,17 @@ struct WorkItemContext {
     port: u16,
 }
 
+
+///
+/// A wrapper around the `datagram_received_workitem_routine`, which ensures
+/// safety.
+/// 
+unsafe extern "C" fn datagram_received_workitem_routine_unsafe(
+    context: PVOID,
+) {
+    datagram_received_workitem_routine(context)
+}
+
 ///
 /// `datagram_received_workitem_routine` is the callback function for datagram
 /// receive related work items. Its behavior matches the invariant described by
@@ -1271,24 +1318,23 @@ struct WorkItemContext {
 /// # Arguments:
 ///
 /// * `context` - A valid WorkItemContext pointer, as per the ExQueueWorkItem
-///   call.
+///   call in `receive_from_event_handler`.
 ///
-/// # Safety
 ///
-/// SAFETY: This function is safe because
-///         1. `context_ptr` is compared to null before being dereferenced.
-///         2. TODO: Why are all callbacks inherently unsafe? How can I prove
-///            that the usage here is safe.
-///
-unsafe extern "C" fn datagram_received_workitem_routine(context_ptr: PVOID) {
+fn datagram_received_workitem_routine(context_ptr: PVOID) {
     if context_ptr.is_null() {
         return;
     }
 
-    let context = &*(context_ptr as *mut WorkItemContext);
+    // SAFETY: This is safe because:
+    //         `context_ptr` is a valid pointer.
+    let context = unsafe { &*(context_ptr as *mut WorkItemContext) };
 
     (context.read_callback)(context.identifier, &context.data, context.ip, context.port);
 
+    // SAFETY: This is safe because:
+    //         `context_ptr` is a valid WdkAllocator allocated buffer, as per
+    //         the ExQueueWorkItem call in `receive_from_event_handler`.
     unsafe {
         WdkAllocator.dealloc(context_ptr as *mut u8, DEALLOC_LAYOUT);
     }
