@@ -55,12 +55,12 @@ This example attempts to host a socket at IP: 127.0.0.1, Port: 54070, and echo a
 ```rust
 extern crate alloc;
 use alloc::vec::Vec;
-use wdk_udp_socket::{SocketIdentifier, UdpSocket, IP};
+use wdk_udp_socket::{UdpSocketIdentifier, UdpSocket, IP};
 
 fn read_async() {
     match UdpSocket::new(IP([127, 0, 0, 1]), 54070, socket_read_handler) {
         Ok(identifier) => {
-            let mutex_ptr = GlobalSockets::get_socket(identifier).unwrap();
+            let mutex_ptr = GlobalUdpSockets::get_socket(identifier).unwrap();
             let socket_locked = unsafe { (*mutex_ptr).lock().unwrap() };
 
             let (ip, port) = socket_locked.get_address();
@@ -72,14 +72,14 @@ fn read_async() {
             );
 
             // leave open for the read handler
-            //GlobalSockets::close_socket(identifier);
+            //GlobalUdpSockets::close_socket(identifier);
             //println!("Closed the socket");
         }
         Err(e) => println!("Failed to create Socket: {:?}", e),
     }
 }
 
-fn socket_read_handler(identifier: SocketIdentifier, data: &Vec<u8>, ip: IP, port: u16) {
+fn socket_read_handler(identifier: UdpSocketIdentifier, data: &Vec<u8>, ip: IP, port: u16) {
     use alloc::string::String;
     println!(
         "Socket Read: {:?} | {}",
@@ -87,7 +87,7 @@ fn socket_read_handler(identifier: SocketIdentifier, data: &Vec<u8>, ip: IP, por
         String::from_utf8_lossy(&data)
     );
 
-    let mutex_ptr = GlobalSockets::get_socket(identifier).unwrap();
+    let mutex_ptr = GlobalUdpSockets::get_socket(identifier).unwrap();
     let socket_locked = unsafe { (*mutex_ptr).lock().unwrap() };
 
     match socket_locked.write_blocking(data, ip, port) {

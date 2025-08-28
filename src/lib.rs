@@ -82,20 +82,20 @@ const RESERVED: *mut () = 1 as *mut ();
 /// The ordering to use when loading/storing in the OPEN_SOCKETS array.
 const SOCKET_ORDERING: Ordering = Ordering::SeqCst;
 
-pub struct GlobalSockets {}
+pub struct GlobalUdpSockets {}
 
-impl GlobalSockets {
+impl GlobalUdpSockets {
     ///
     /// Finds the next available slot in the OPEN_SOCKETS array, and marks it as
     /// in use, returning the identifier. Returns None if no open slots were
     /// found.
     ///
-    fn reserve_slot() -> Option<SocketIdentifier> {
+    fn reserve_slot() -> Option<UdpSocketIdentifier> {
         for socket_idx in 0..MAX_OPEN_SOCKETS {
             let ptr = OPEN_SOCKETS[socket_idx].load(SOCKET_ORDERING);
             if ptr.is_null() {
                 OPEN_SOCKETS[socket_idx].store(RESERVED as *mut _, SOCKET_ORDERING);
-                return Some(SocketIdentifier::from_socket_idx(socket_idx));
+                return Some(UdpSocketIdentifier::from_socket_idx(socket_idx));
             }
         }
         None
@@ -110,7 +110,7 @@ impl GlobalSockets {
     ///
     /// TODO: Should I add an error return in case it fails?
     ///
-    fn insert_socket(id: SocketIdentifier, socket: *mut KMutex<UdpSocket>) {
+    fn insert_socket(id: UdpSocketIdentifier, socket: *mut KMutex<UdpSocket>) {
         if id.socket_idx >= MAX_OPEN_SOCKETS {
             return;
         }
@@ -128,7 +128,7 @@ impl GlobalSockets {
     /// Returns a pointer to the socket's mutex. Returns None if it cannot be
     /// found. If Some is returned, the pointer is guaranteed to be non null.
     ///
-    pub fn get_socket(id: SocketIdentifier) -> Option<*mut KMutex<UdpSocket>> {
+    pub fn get_socket(id: UdpSocketIdentifier) -> Option<*mut KMutex<UdpSocket>> {
         if id.socket_idx >= MAX_OPEN_SOCKETS {
             return None;
         }
@@ -147,12 +147,12 @@ impl GlobalSockets {
     /// TODO: Should I add a status return in case the socket wasn't found or
     /// couldn't be locked?
     ///
-    pub fn close_socket(identifier: SocketIdentifier) {
+    pub fn close_socket(identifier: UdpSocketIdentifier) {
         if identifier.socket_idx >= MAX_OPEN_SOCKETS {
             return;
         }
 
-        if let Some(mutex_ptr) = GlobalSockets::get_socket(identifier) {
+        if let Some(mutex_ptr) = GlobalUdpSockets::get_socket(identifier) {
             if mutex_ptr.is_null() || mutex_ptr == RESERVED as *mut _ {
                 return;
             }
@@ -175,7 +175,7 @@ impl GlobalSockets {
     ///
     pub fn close_all_sockets() {
         for idx in 0..MAX_OPEN_SOCKETS {
-            GlobalSockets::close_socket(SocketIdentifier::from_socket_idx(idx));
+            GlobalUdpSockets::close_socket(UdpSocketIdentifier::from_socket_idx(idx));
         }
 
         un_init();
@@ -193,7 +193,7 @@ impl Debug for IP {
 }
 
 ///
-/// Holds the key to access sockets via GlobalSockets::get_socket. This identifier
+/// Holds the key to access sockets via GlobalUdpSockets::get_socket. This identifier
 /// is unique to each Socket, easily comparable, and easily copyable.
 ///
 /// ASIDE:
@@ -201,20 +201,20 @@ impl Debug for IP {
 /// This data structure can likely be removed if the method of safe concurrency
 /// is changed (if `OPEN_PORTS`) is removed.
 ///
-/// Technically GlobalSockets and SocketIdentifier could be represented as traits
+/// Technically GlobalUdpSockets and UdpSocketIdentifier could be represented as traits
 /// with implementations, however given their limited and coupled uses, that
 /// seems unnecessarily complex.
 ///
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct SocketIdentifier {
+pub struct UdpSocketIdentifier {
     /// The underlying data used to identify and reference a socket. This is used
-    /// for this specific GlobalSockets implementation.
+    /// for this specific GlobalUdpSockets implementation.
     socket_idx: usize,
 }
 
-impl SocketIdentifier {
+impl UdpSocketIdentifier {
     ///
-    /// Creates a new SocketIdentifier from the underlying identifier data.
+    /// Creates a new UdpSocketIdentifier from the underlying identifier data.
     ///
     fn from_socket_idx(socket_idx: usize) -> Self {
         Self {
@@ -325,7 +325,7 @@ pub enum NewSocketErr {
     #[allow(dead_code)]
     FailedToEnableCallback(SocketEnableCallbackErr),
 
-    FailedToAddToGlobalSockets,
+    FailedToAddToGlobalUdpSockets,
 }
 
 #[derive(Debug)]
@@ -400,7 +400,7 @@ pub enum SocketWriteErr {
 /// * `ip` - The IP that sent the datagram.
 /// * `port` - The Port that sent the datagram.
 ///
-type AsyncReadCallback = fn(identifier: SocketIdentifier, data: &Vec<u8>, ip: IP, port: u16);
+type AsyncReadCallback = fn(identifier: UdpSocketIdentifier, data: &Vec<u8>, ip: IP, port: u16);
 
 ///
 /// All the data representing a UdpSocket.
@@ -415,10 +415,10 @@ pub struct UdpSocket {
     /// everything else regarding the socket.
     socket_ptr: PWSK_SOCKET,
 
-    /// An identifier used to retrieve the port from the GlobalSockets manager.
-    /// This value should always be Some(SocketIdentifier), outside of
+    /// An identifier used to retrieve the port from the GlobalUdpSockets manager.
+    /// This value should always be Some(UdpSocketIdentifier), outside of
     /// construction.
-    identifier: Option<SocketIdentifier>,
+    identifier: Option<UdpSocketIdentifier>,
 }
 
 impl UdpSocket {
@@ -438,17 +438,17 @@ impl UdpSocket {
     ///
     /// # Return value:
     ///
-    /// * `Ok(SocketIdentifier)` - The socket identifier, upon success.
+    /// * `Ok(UdpSocketIdentifier)` - The socket identifier, upon success.
     /// * `Err(InitErr)` - Otherwise.
     ///
     pub fn new(
         ip: IP,
         port: u16,
         read_callback: AsyncReadCallback,
-    ) -> Result<SocketIdentifier, NewSocketErr> {
+    ) -> Result<UdpSocketIdentifier, NewSocketErr> {
         try_init().map_err(|e| NewSocketErr::FailedInit(e))?;
 
-        let identifier = GlobalSockets::reserve_slot().ok_or(NewSocketErr::FailedToReserveSlot)?;
+        let identifier = GlobalUdpSockets::reserve_slot().ok_or(NewSocketErr::FailedToReserveSlot)?;
 
         let socket_ptr = Self::make_socket(identifier, read_callback)
             .map_err(|e| NewSocketErr::FailedToMakeSocket(e))?;
@@ -481,13 +481,13 @@ impl UdpSocket {
         let mutex = Box::new(KMutex::new(socket).unwrap());
         let mutex_ptr = Box::into_raw(mutex);
 
-        GlobalSockets::insert_socket(identifier, mutex_ptr);
-        let mutex_ptr = match GlobalSockets::get_socket(identifier) {
+        GlobalUdpSockets::insert_socket(identifier, mutex_ptr);
+        let mutex_ptr = match GlobalUdpSockets::get_socket(identifier) {
             Some(mutex_ptr) => mutex_ptr,
             None => {
                 // undefined behavior, likely mem leak on socket struct.
                 Self::close_socket(socket_ptr);
-                return Err(NewSocketErr::FailedToAddToGlobalSockets);
+                return Err(NewSocketErr::FailedToAddToGlobalUdpSockets);
             }
         };
 
@@ -626,7 +626,7 @@ impl UdpSocket {
     /// `close` cleans up all stored data held by the Socket, freeing any in use
     /// memory. The caller is required to immediately dispose of the socket
     /// after calling this function. This function is internal, and only for use
-    /// by `GlobalSockets::close_socket`.
+    /// by `GlobalUdpSockets::close_socket`.
     ///
     fn close(&self) {
         Self::close_socket(self.socket_ptr);
@@ -653,7 +653,7 @@ impl UdpSocket {
     /// * `Err(SocketCreationErr)` - Otherwise.
     ///
     fn make_socket(
-        identifier: SocketIdentifier,
+        identifier: UdpSocketIdentifier,
         read_callback: AsyncReadCallback,
     ) -> Result<*mut WSK_SOCKET, SocketCreationErr> {
         let mutex_ptr = WSK_REGISTRATION.load(SOCKET_ORDERING);
@@ -746,7 +746,7 @@ impl UdpSocket {
             |irp, _ctx| {
                 // SAFETY: This is safe because:
                 //         1. `Client` has been checked as being non null.
-                //         2. `Context` is a valid SocketIdentifier pointer.
+                //         2. `Context` is a valid UdpSocketIdentifier pointer.
                 //         3. `Dispatch` is a valid WSK_CLIENT_DATAGRAM_DISPATCH
                 //            pointer.
                 //         4. `OwningProcess`, `OwningThread`, and
@@ -1060,7 +1060,7 @@ impl UdpSocket {
 /// Context for a WskSocket call, maintained throughout all socket events.
 ///
 struct WskSocketContext {
-    identifier: SocketIdentifier,
+    identifier: UdpSocketIdentifier,
     read_callback: AsyncReadCallback,
 }
 
@@ -1225,7 +1225,7 @@ fn receive_from_event_handler(
         // "If [data_indication] is NULL, the socket is no longer functional and
         //  the WSK application must call the WskCloseSocket function to close
         //  the socket as soon as possible." - PFN_WSK_RECEIVE_FROM_EVENT MSDN
-        GlobalSockets::close_socket(socket_context.identifier);
+        GlobalUdpSockets::close_socket(socket_context.identifier);
         return STATUS_SUCCESS;
     }
 
@@ -1301,7 +1301,7 @@ fn receive_from_event_handler(
 struct WorkItemContext {
     work_item: WORK_QUEUE_ITEM,
 
-    identifier: SocketIdentifier,
+    identifier: UdpSocketIdentifier,
     read_callback: AsyncReadCallback,
     data: Vec<u8>,
     ip: IP,
