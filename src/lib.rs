@@ -185,7 +185,7 @@ impl GlobalUdpSockets {
 ///
 /// SocketAddr represents an IPV4 socket's ip address and port.
 ///
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct UdpSocketAddr {
     pub ip: [u8; 4],
     pub port: u16,
