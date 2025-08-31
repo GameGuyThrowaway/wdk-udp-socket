@@ -182,13 +182,73 @@ impl GlobalUdpSockets {
     }
 }
 
-/// A structure representing an IPV4 address.
+///
+/// SocketAddr represents an IPV4 socket's ip address and port.
+///
 #[derive(Clone, Copy)]
-pub struct IP(pub [u8; 4]);
+pub struct SocketAddr {
+    pub ip: [u8; 4],
+    pub port: u16,
+}
 
-impl Debug for IP {
+impl SocketAddr {
+    ///
+    /// `to_in_addr` initializes an IN_ADDR using the SocketAddr.
+    ///
+    /// # Return value:
+    ///
+    /// * `IN_ADDR` - The newly populated data structure.
+    ///
+    pub fn to_in_addr(&self) -> IN_ADDR {
+        IN_ADDR {
+            S_un: in_addr__bindgen_ty_1 {
+                S_un_b: in_addr__bindgen_ty_1__bindgen_ty_1 {
+                    s_b1: self.ip[0],
+                    s_b2: self.ip[1],
+                    s_b3: self.ip[2],
+                    s_b4: self.ip[3],
+                },
+            },
+        }
+    }
+
+    ///
+    /// `from_in_addr` takes an IN_ADDR and a port, and creates a SocketAddr
+    /// from them.
+    ///
+    /// # Arguments:
+    /// * `in_addr` - The IN_ADDR data.
+    /// * `port` - The port associated with the address.
+    ///
+    /// # Return value:
+    ///
+    /// * `SocketAddr` - The socket's address.
+    ///
+    pub fn from_in_addr(in_addr: &IN_ADDR, port: u16) -> SocketAddr {
+        // SAFETY: This is safe because:
+        //         Regardless of the actual data type, either this returns an
+        //         invalid IP, which is still memory safe, or it returns a valid IP,
+        //         which is memory safe.
+        let ip = unsafe {
+            [
+                in_addr.S_un.S_un_b.s_b1,
+                in_addr.S_un.S_un_b.s_b2,
+                in_addr.S_un.S_un_b.s_b3,
+                in_addr.S_un.S_un_b.s_b4,
+            ]
+        };
+
+        Self { ip, port }
+    }
+}
+
+impl Debug for SocketAddr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}.{}.{}.{}", self.0[0], self.0[1], self.0[2], self.0[3],)
+        write!(
+            f,
+            "{}.{}.{}.{}:{}",
+            self.ip[0], self.ip[1], self.ip[2], self.ip[3], self.port
+        )
     }
 }
 
@@ -397,19 +457,16 @@ pub enum SocketWriteErr {
 ///   the read came from.
 /// * `data` - All data from the datagram. This is a Vec to guarantee it is
 ///   comprised of non paged memory.
-/// * `ip` - The IP that sent the datagram.
-/// * `port` - The Port that sent the datagram.
+/// * `src` - The sender of the datagram.
 ///
-type AsyncReadCallback = fn(identifier: UdpSocketIdentifier, data: &Vec<u8>, ip: IP, port: u16);
+type AsyncReadCallback = fn(identifier: UdpSocketIdentifier, data: &Vec<u8>, src: SocketAddr);
 
 ///
 /// All the data representing a UdpSocket.
 ///
 pub struct UdpSocket {
-    /// The Socket's current IPV4 address.
-    ip: IP,
-    /// The Socket's current port number.
-    port: u16,
+    /// The Socket's current IPV4 address and port.
+    address: SocketAddr,
 
     /// The underlying socket pointer, used for cleanup, socket writes, and
     /// everything else regarding the socket.
@@ -442,23 +499,23 @@ impl UdpSocket {
     /// * `Err(InitErr)` - Otherwise.
     ///
     pub fn new(
-        ip: IP,
-        port: u16,
+        addr: SocketAddr,
         read_callback: AsyncReadCallback,
     ) -> Result<UdpSocketIdentifier, NewSocketErr> {
         try_init().map_err(|e| NewSocketErr::FailedInit(e))?;
 
-        let identifier = GlobalUdpSockets::reserve_slot().ok_or(NewSocketErr::FailedToReserveSlot)?;
+        let identifier =
+            GlobalUdpSockets::reserve_slot().ok_or(NewSocketErr::FailedToReserveSlot)?;
 
         let socket_ptr = Self::make_socket(identifier, read_callback)
             .map_err(|e| NewSocketErr::FailedToMakeSocket(e))?;
 
-        if let Err(e) = Self::bind_socket(socket_ptr, ip, port) {
+        if let Err(e) = Self::bind_socket(socket_ptr, addr) {
             Self::close_socket(socket_ptr);
             return Err(NewSocketErr::FailedToBindSocket(e));
         }
 
-        let (ip, port) = match Self::get_socket_address(socket_ptr) {
+        let address = match Self::get_socket_address(socket_ptr) {
             Ok(address) => address,
             Err(e) => {
                 Self::close_socket(socket_ptr);
@@ -472,8 +529,7 @@ impl UdpSocket {
         }
 
         let socket = UdpSocket {
-            ip,
-            port,
+            address,
             socket_ptr,
             identifier: None,
         };
@@ -504,10 +560,10 @@ impl UdpSocket {
     ///
     /// # Return value:
     ///
-    /// * `(ip: IP, port: u16)` - The ip and port.
+    /// * `SocketAddr` - The address of the socket.
     ///
-    pub fn get_address(&self) -> (IP, u16) {
-        (self.ip, self.port)
+    pub fn get_address(&self) -> SocketAddr {
+        self.address
     }
 
     ///
@@ -517,8 +573,7 @@ impl UdpSocket {
     ///
     /// * `data` - A buffer of data in NON_PAGEABLE memory, to write from the
     ///   socket to the receiver at the ip and port.
-    /// * `ip` - The IP to write the data to.
-    /// * `port` - The port to write the data to.
+    /// * `dst` - The destination socket address to write the data to.
     ///
     /// Note: `data` must be a Vec<u8>, as IoAllocateMdl requires non paged
     /// memory.
@@ -528,7 +583,7 @@ impl UdpSocket {
     /// * `Ok(())` - Upon success.
     /// * `Err(SocketWriteErr)` - Otherwise.
     ///
-    pub fn write_blocking(&self, data: &Vec<u8>, ip: IP, port: u16) -> Result<(), SocketWriteErr> {
+    pub fn write_blocking(&self, data: &Vec<u8>, dst: SocketAddr) -> Result<(), SocketWriteErr> {
         let socket_ptr = self.socket_ptr;
         if socket_ptr.is_null() {
             return Err(SocketWriteErr::InvalidSocket);
@@ -582,8 +637,8 @@ impl UdpSocket {
 
         let mut address = SOCKADDR_IN {
             sin_family: AF_INET as u16,
-            sin_port: port.swap_bytes(),
-            sin_addr: in_addr_from_ip(ip),
+            sin_port: dst.port.swap_bytes(),
+            sin_addr: dst.to_in_addr(),
             sin_zero: [0; 8],
         };
 
@@ -852,7 +907,7 @@ impl UdpSocket {
     /// * `Ok(*mut WSK_SOCKET)` - The newly created socket.
     /// * `Err(SocketCreationErr)` - Otherwise.
     ///
-    fn bind_socket(socket_ptr: PWSK_SOCKET, ip: IP, port: u16) -> Result<(), SocketBindErr> {
+    fn bind_socket(socket_ptr: PWSK_SOCKET, address: SocketAddr) -> Result<(), SocketBindErr> {
         if socket_ptr.is_null() {
             return Err(SocketBindErr::InvalidSocket);
         }
@@ -875,8 +930,8 @@ impl UdpSocket {
 
         let mut address = SOCKADDR_IN {
             sin_family: AF_INET as u16,
-            sin_port: port.swap_bytes(),
-            sin_addr: in_addr_from_ip(ip),
+            sin_port: address.port.swap_bytes(),
+            sin_addr: address.to_in_addr(),
             sin_zero: [0; 8],
         };
 
@@ -902,8 +957,7 @@ impl UdpSocket {
     }
 
     ///
-    /// `get_socket_address` takes a socket, and reqeusts its current address
-    /// (ip and port).
+    /// `get_socket_address` takes a socket, and reqeusts its current address.
     ///
     /// # Arguments:
     ///
@@ -912,10 +966,10 @@ impl UdpSocket {
     ///
     /// # Return value:
     ///
-    /// * `Ok((ip: IP, port: u16))` - The socket's ip and port.
+    /// * `Ok(SocketAddr)` - The socket's ip and port.
     /// * `Err(SocketCreationErr)` - Otherwise.
     ///
-    fn get_socket_address(socket_ptr: PWSK_SOCKET) -> Result<(IP, u16), GetSocketAddressErr> {
+    fn get_socket_address(socket_ptr: PWSK_SOCKET) -> Result<SocketAddr, GetSocketAddressErr> {
         if socket_ptr.is_null() {
             return Err(GetSocketAddressErr::InvalidSocket);
         }
@@ -955,9 +1009,7 @@ impl UdpSocket {
         .map_err(|e| GetSocketAddressErr::IrpErr(e))?;
 
         let port = result.sin_port.swap_bytes();
-        let ip = ip_from_in_addr(&result.sin_addr);
-
-        Ok((ip, port))
+        Ok(SocketAddr::from_in_addr(&result.sin_addr, port))
     }
 
     ///
@@ -1062,54 +1114,6 @@ impl UdpSocket {
 struct WskSocketContext {
     identifier: UdpSocketIdentifier,
     read_callback: AsyncReadCallback,
-}
-
-///
-/// `in_addr_from_ip` takes an ip, and initializes an IN_ADDR using it.
-///
-/// # Arguments:
-/// * `ip` - The 4 byte IPV4, in the form of [127, 0, 0, 1].
-///
-/// # Return value:
-///
-/// * `IN_ADDR` - The newly populated data structure.
-///
-fn in_addr_from_ip(ip: IP) -> IN_ADDR {
-    IN_ADDR {
-        S_un: in_addr__bindgen_ty_1 {
-            S_un_b: in_addr__bindgen_ty_1__bindgen_ty_1 {
-                s_b1: ip.0[0],
-                s_b2: ip.0[1],
-                s_b3: ip.0[2],
-                s_b4: ip.0[3],
-            },
-        },
-    }
-}
-
-///
-/// `ip_from_in_addr` takes an IN_ADDR, and extracts the raw ipv4 data from it.
-///
-/// # Arguments:
-/// * `in_addr` - The IN_ADDR data.
-///
-/// # Return value:
-///
-/// * `IP` - The 4 byte IPV4, in the form of [127, 0, 0, 1].
-///
-fn ip_from_in_addr(in_addr: &IN_ADDR) -> IP {
-    // SAFETY: This is safe because:
-    //         Regardless of the actual data type, either this returns an
-    //         invalid IP, which is still memory safe, or it returns a valid IP,
-    //         which is memory safe.
-    unsafe {
-        IP([
-            in_addr.S_un.S_un_b.s_b1,
-            in_addr.S_un.S_un_b.s_b2,
-            in_addr.S_un.S_un_b.s_b3,
-            in_addr.S_un.S_un_b.s_b4,
-        ])
-    }
 }
 
 #[derive(Debug)]
@@ -1249,7 +1253,7 @@ fn receive_from_event_handler(
         let address = unsafe { *(address as PSOCKADDR_IN) };
 
         let port = address.sin_port.swap_bytes();
-        let ip = ip_from_in_addr(&address.sin_addr);
+        let address = SocketAddr::from_in_addr(&address.sin_addr, port);
 
         let data = vec_from_wsk_buf(&datagram.Buffer);
 
@@ -1264,8 +1268,7 @@ fn receive_from_event_handler(
                 context.identifier = socket_context.identifier;
                 context.read_callback = socket_context.read_callback;
                 context.data = data;
-                context.ip = ip;
-                context.port = port;
+                context.address = address;
 
                 // SAFETY: This is safe because:
                 //         1. `WorkItem` is a valid PWORK_QUEUE_ITEM.
@@ -1304,8 +1307,7 @@ struct WorkItemContext {
     identifier: UdpSocketIdentifier,
     read_callback: AsyncReadCallback,
     data: Vec<u8>,
-    ip: IP,
-    port: u16,
+    address: SocketAddr,
 }
 
 ///
@@ -1339,7 +1341,7 @@ fn datagram_received_workitem_routine(context_ptr: PVOID) {
     //         `context_ptr` is a valid pointer.
     let context = unsafe { &*(context_ptr as *mut WorkItemContext) };
 
-    (context.read_callback)(context.identifier, &context.data, context.ip, context.port);
+    (context.read_callback)(context.identifier, &context.data, context.address);
 
     // SAFETY: This is safe because:
     //         `context_ptr` is a valid WdkAllocator allocated buffer, as per
