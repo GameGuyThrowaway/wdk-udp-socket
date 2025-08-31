@@ -12,6 +12,7 @@ target-kmdf-version-minor = 33
 wdk = { git = "https://github.com/GameGuyThrowaway/windows-drivers-rs.git", branch = "wsk-bindings" }
 wdk-sys = { git = "https://github.com/GameGuyThrowaway/windows-drivers-rs.git", branch = "wsk-bindings", features = ["network"] }
 wdk-alloc = { git = "https://github.com/GameGuyThrowaway/windows-drivers-rs.git", branch = "wsk-bindings" }
+
 wdk-mutex = { git = "https://github.com/GameGuyThrowaway/wdk-mutex.git" }
 
 [profile.dev]
