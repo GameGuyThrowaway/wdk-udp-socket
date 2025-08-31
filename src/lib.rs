@@ -2,7 +2,7 @@
 
 use core::{
     alloc::{GlobalAlloc, Layout},
-    fmt::Debug,
+    fmt::{Debug, Display},
     ptr::null_mut,
     slice,
     sync::atomic::{AtomicPtr, Ordering},
@@ -186,12 +186,16 @@ impl GlobalUdpSockets {
 /// SocketAddr represents an IPV4 socket's ip address and port.
 ///
 #[derive(Clone, Copy)]
-pub struct SocketAddr {
+pub struct UdpSocketAddr {
     pub ip: [u8; 4],
     pub port: u16,
 }
 
-impl SocketAddr {
+impl UdpSocketAddr {
+    pub fn new(ip: [u8; 4], port: u16) -> Self {
+        Self { ip, port }
+    }
+
     ///
     /// `to_in_addr` initializes an IN_ADDR using the SocketAddr.
     ///
@@ -224,7 +228,7 @@ impl SocketAddr {
     ///
     /// * `SocketAddr` - The socket's address.
     ///
-    pub fn from_in_addr(in_addr: &IN_ADDR, port: u16) -> SocketAddr {
+    pub fn from_in_addr(in_addr: &IN_ADDR, port: u16) -> UdpSocketAddr {
         // SAFETY: This is safe because:
         //         Regardless of the actual data type, either this returns an
         //         invalid IP, which is still memory safe, or it returns a valid IP,
@@ -242,7 +246,17 @@ impl SocketAddr {
     }
 }
 
-impl Debug for SocketAddr {
+impl Debug for UdpSocketAddr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}.{}.{}.{}:{}",
+            self.ip[0], self.ip[1], self.ip[2], self.ip[3], self.port
+        )
+    }
+}
+
+impl Display for UdpSocketAddr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -459,14 +473,14 @@ pub enum SocketWriteErr {
 ///   comprised of non paged memory.
 /// * `src` - The sender of the datagram.
 ///
-type AsyncReadCallback = fn(identifier: UdpSocketIdentifier, data: &Vec<u8>, src: SocketAddr);
+type AsyncReadCallback = fn(identifier: UdpSocketIdentifier, data: &Vec<u8>, src: UdpSocketAddr);
 
 ///
 /// All the data representing a UdpSocket.
 ///
 pub struct UdpSocket {
     /// The Socket's current IPV4 address and port.
-    address: SocketAddr,
+    address: UdpSocketAddr,
 
     /// The underlying socket pointer, used for cleanup, socket writes, and
     /// everything else regarding the socket.
@@ -499,7 +513,7 @@ impl UdpSocket {
     /// * `Err(InitErr)` - Otherwise.
     ///
     pub fn new(
-        addr: SocketAddr,
+        addr: UdpSocketAddr,
         read_callback: AsyncReadCallback,
     ) -> Result<UdpSocketIdentifier, NewSocketErr> {
         try_init().map_err(|e| NewSocketErr::FailedInit(e))?;
@@ -562,7 +576,7 @@ impl UdpSocket {
     ///
     /// * `SocketAddr` - The address of the socket.
     ///
-    pub fn get_address(&self) -> SocketAddr {
+    pub fn get_address(&self) -> UdpSocketAddr {
         self.address
     }
 
@@ -583,7 +597,7 @@ impl UdpSocket {
     /// * `Ok(())` - Upon success.
     /// * `Err(SocketWriteErr)` - Otherwise.
     ///
-    pub fn write_blocking(&self, data: &Vec<u8>, dst: SocketAddr) -> Result<(), SocketWriteErr> {
+    pub fn write_blocking(&self, data: &Vec<u8>, dst: UdpSocketAddr) -> Result<(), SocketWriteErr> {
         let socket_ptr = self.socket_ptr;
         if socket_ptr.is_null() {
             return Err(SocketWriteErr::InvalidSocket);
@@ -907,7 +921,7 @@ impl UdpSocket {
     /// * `Ok(*mut WSK_SOCKET)` - The newly created socket.
     /// * `Err(SocketCreationErr)` - Otherwise.
     ///
-    fn bind_socket(socket_ptr: PWSK_SOCKET, address: SocketAddr) -> Result<(), SocketBindErr> {
+    fn bind_socket(socket_ptr: PWSK_SOCKET, address: UdpSocketAddr) -> Result<(), SocketBindErr> {
         if socket_ptr.is_null() {
             return Err(SocketBindErr::InvalidSocket);
         }
@@ -969,7 +983,7 @@ impl UdpSocket {
     /// * `Ok(SocketAddr)` - The socket's ip and port.
     /// * `Err(SocketCreationErr)` - Otherwise.
     ///
-    fn get_socket_address(socket_ptr: PWSK_SOCKET) -> Result<SocketAddr, GetSocketAddressErr> {
+    fn get_socket_address(socket_ptr: PWSK_SOCKET) -> Result<UdpSocketAddr, GetSocketAddressErr> {
         if socket_ptr.is_null() {
             return Err(GetSocketAddressErr::InvalidSocket);
         }
@@ -1009,7 +1023,7 @@ impl UdpSocket {
         .map_err(|e| GetSocketAddressErr::IrpErr(e))?;
 
         let port = result.sin_port.swap_bytes();
-        Ok(SocketAddr::from_in_addr(&result.sin_addr, port))
+        Ok(UdpSocketAddr::from_in_addr(&result.sin_addr, port))
     }
 
     ///
@@ -1253,7 +1267,7 @@ fn receive_from_event_handler(
         let address = unsafe { *(address as PSOCKADDR_IN) };
 
         let port = address.sin_port.swap_bytes();
-        let address = SocketAddr::from_in_addr(&address.sin_addr, port);
+        let address = UdpSocketAddr::from_in_addr(&address.sin_addr, port);
 
         let data = vec_from_wsk_buf(&datagram.Buffer);
 
@@ -1307,7 +1321,7 @@ struct WorkItemContext {
     identifier: UdpSocketIdentifier,
     read_callback: AsyncReadCallback,
     data: Vec<u8>,
-    address: SocketAddr,
+    address: UdpSocketAddr,
 }
 
 ///

@@ -55,20 +55,18 @@ This example attempts to host a socket at IP: 127.0.0.1, Port: 54070, and echo a
 ```rust
 extern crate alloc;
 use alloc::vec::Vec;
-use wdk_udp_socket::{UdpSocketIdentifier, UdpSocket, IP};
+use wdk_udp_socket::{UdpSocketIdentifier, UdpSocket, UdpSocketAddr};
 
 fn read_async() {
-    match UdpSocket::new(IP([127, 0, 0, 1]), 54070, socket_read_handler) {
+    match UdpSocket::new(UdpSocketAddr::new([127, 0, 0, 1], 54070), socket_read_handler) {
         Ok(identifier) => {
             let mutex_ptr = GlobalUdpSockets::get_socket(identifier).unwrap();
             let socket_locked = unsafe { (*mutex_ptr).lock().unwrap() };
 
-            let (ip, port) = socket_locked.get_address();
+            let address = socket_locked.get_address();
             println!(
-                "Opened a UDP Socket on: {:?}:{} with ID: {:?}",
-                ip,
-                port,
-                identifier
+                "Opened a UDP Socket on: {address} with ID: {:?}",
+                identifier,
             );
 
             // leave open for the read handler
@@ -79,7 +77,7 @@ fn read_async() {
     }
 }
 
-fn socket_read_handler(identifier: UdpSocketIdentifier, data: &Vec<u8>, ip: IP, port: u16) {
+fn socket_read_handler(identifier: UdpSocketIdentifier, data: &Vec<u8>, address: UdpSocketAddr) {
     use alloc::string::String;
     println!(
         "Socket Read: {:?} | {}",
@@ -90,7 +88,7 @@ fn socket_read_handler(identifier: UdpSocketIdentifier, data: &Vec<u8>, ip: IP, 
     let mutex_ptr = GlobalUdpSockets::get_socket(identifier).unwrap();
     let socket_locked = unsafe { (*mutex_ptr).lock().unwrap() };
 
-    match socket_locked.write_blocking(data, ip, port) {
+    match socket_locked.write_blocking(data, address) {
         Ok(_) => println!("Echoed Back {} bytes", data.len()),
         Err(e) => println!("Failed to write any data: {:?}", e),
     }
