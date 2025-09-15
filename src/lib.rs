@@ -192,7 +192,7 @@ pub struct UdpSocketAddr {
 }
 
 impl UdpSocketAddr {
-    pub fn new(ip: [u8; 4], port: u16) -> Self {
+    pub const fn new(ip: [u8; 4], port: u16) -> Self {
         Self { ip, port }
     }
 
@@ -203,7 +203,7 @@ impl UdpSocketAddr {
     ///
     /// * `IN_ADDR` - The newly populated data structure.
     ///
-    pub fn to_in_addr(&self) -> IN_ADDR {
+    pub const fn to_in_addr(&self) -> IN_ADDR {
         IN_ADDR {
             S_un: in_addr__bindgen_ty_1 {
                 S_un_b: in_addr__bindgen_ty_1__bindgen_ty_1 {
@@ -228,7 +228,7 @@ impl UdpSocketAddr {
     ///
     /// * `SocketAddr` - The socket's address.
     ///
-    pub fn from_in_addr(in_addr: &IN_ADDR, port: u16) -> UdpSocketAddr {
+    pub const fn from_in_addr(in_addr: &IN_ADDR, port: u16) -> UdpSocketAddr {
         // SAFETY: This is safe because:
         //         Regardless of the actual data type, either this returns an
         //         invalid IP, which is still memory safe, or it returns a valid IP,
