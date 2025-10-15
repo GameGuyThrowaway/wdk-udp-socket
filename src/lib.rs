@@ -1,5 +1,7 @@
 #![no_std]
 
+extern crate alloc;
+
 use core::{
     alloc::{GlobalAlloc, Layout},
     fmt::{Debug, Display},
@@ -7,8 +9,6 @@ use core::{
     slice,
     sync::atomic::{AtomicPtr, Ordering},
 };
-
-extern crate alloc;
 
 use alloc::{boxed::Box, vec::Vec};
 use wdk::nt_success;
@@ -31,14 +31,13 @@ use wdk_sys::{
     _MM_PAGE_PRIORITY::NormalPagePriority,
     _WORK_QUEUE_TYPE::DelayedWorkQueue,
 };
-
-use irp_helper::{call_irp_blocking, BlockingIrpErr};
-use misc::MmGetSystemAddressForMdlSafe;
-
-use crate::misc::ExInitializeWorkItem;
+use serde::{Serialize, Deserialize};
 
 mod irp_helper;
 mod misc;
+
+use irp_helper::{call_irp_blocking, BlockingIrpErr};
+use misc::{MmGetSystemAddressForMdlSafe, ExInitializeWorkItem};
 
 /// A global variable for the WSK_REGISTRATION, which cannot be deallocated
 /// until all sockets are closed and we deregister.
@@ -185,7 +184,7 @@ impl GlobalUdpSockets {
 ///
 /// SocketAddr represents an IPV4 socket's ip address and port.
 ///
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct UdpSocketAddr {
     pub ip: [u8; 4],
     pub port: u16,

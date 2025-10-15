@@ -14,6 +14,7 @@ wdk-sys = { git = "https://github.com/GameGuyThrowaway/windows-drivers-rs.git", 
 wdk-alloc = { git = "https://github.com/GameGuyThrowaway/windows-drivers-rs.git", branch = "ferrum" }
 
 wdk-mutex = { git = "https://github.com/GameGuyThrowaway/wdk-mutex.git" }
+serde = { version = "1.0.228", default-features = false, features = ["serde_derive", "alloc"] }
 
 [profile.dev]
 panic = "abort"
