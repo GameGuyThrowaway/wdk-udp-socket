@@ -109,7 +109,7 @@ where
     unsafe {
         IoSetCompletionRoutine(
             irp,
-            Some(irp_handler_completion_routine_unsafe::<T>),
+            Some(irp_handler_completion_routine::<T>),
             context_ptr as *mut _,
             true as BOOLEAN,
             true as BOOLEAN,
@@ -178,17 +178,6 @@ where
 }
 
 ///
-/// A wrapper around the `irp_handler_completion_routine`, which ensures safety.
-///
-unsafe extern "C" fn irp_handler_completion_routine_unsafe<T: Clone>(
-    device_object: PDEVICE_OBJECT,
-    irp_ptr: PIRP,
-    context: PVOID,
-) -> NTSTATUS {
-    irp_handler_completion_routine::<T>(device_object, irp_ptr, context)
-}
-
-///
 /// `irp_handler_completion_routine` is the completion routine for
 /// `irp_helper::call_irp_blocking`. Its behavior is tightly coupled with the
 /// function to behave safely.
@@ -209,7 +198,7 @@ unsafe extern "C" fn irp_handler_completion_routine_unsafe<T: Clone>(
 /// * `NTSTATUS` - The status of the call. This should always be
 ///   STATUS_MORE_PROCESSING_REQUIRED, as is required for all WSK IRPs.
 ///
-fn irp_handler_completion_routine<T: Clone>(
+extern "C" fn irp_handler_completion_routine<T: Clone>(
     _device_object: PDEVICE_OBJECT,
     irp_ptr: PIRP,
     context: PVOID,

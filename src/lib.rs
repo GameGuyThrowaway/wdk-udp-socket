@@ -52,7 +52,7 @@ const WSK_APP_DISPATCH: WSK_CLIENT_DISPATCH = WSK_CLIENT_DISPATCH {
 };
 
 const WSK_CLIENT_DATAGRAM_DISPATCH: WSK_CLIENT_DATAGRAM_DISPATCH = WSK_CLIENT_DATAGRAM_DISPATCH {
-    WskReceiveFromEvent: Some(receive_from_event_handler_unsafe),
+    WskReceiveFromEvent: Some(receive_from_event_handler),
 };
 
 /// Used because the WdkAllocator does not use layouts in deallocation, but the
@@ -1198,17 +1198,6 @@ fn vec_from_wsk_buf(wsk_buf: &WSK_BUF) -> Result<Vec<u8>, WskBufReadErr> {
 }
 
 ///
-/// A wrapper around the `receive_from_event_handler`, which ensures safety.
-///
-unsafe extern "C" fn receive_from_event_handler_unsafe(
-    context: PVOID,
-    flags: u32,
-    data_indication: PWSK_DATAGRAM_INDICATION,
-) -> NTSTATUS {
-    receive_from_event_handler(context, flags, data_indication)
-}
-
-///
 /// `receive_from_event_handler` is the callback function for datagram sockets'
 /// WskReceiveFromEvent. Its behavior matches the invariant described by the
 /// WskSocket call.
@@ -1223,7 +1212,7 @@ unsafe extern "C" fn receive_from_event_handler_unsafe(
 ///
 /// * `NTSTATUS` - See PFN_WSK_RECEIVE_FROM_EVENT documentation.
 ///
-fn receive_from_event_handler(
+extern "C" fn receive_from_event_handler(
     context: PVOID,
     _flags: u32,
     data_indication: PWSK_DATAGRAM_INDICATION,
@@ -1291,7 +1280,7 @@ fn receive_from_event_handler(
                 unsafe {
                     ExInitializeWorkItem(
                         &mut context.work_item as PWORK_QUEUE_ITEM,
-                        Some(datagram_received_workitem_routine_unsafe),
+                        Some(datagram_received_workitem_routine),
                         context_ptr as PVOID,
                     );
                 }
@@ -1324,14 +1313,6 @@ struct WorkItemContext {
 }
 
 ///
-/// A wrapper around the `datagram_received_workitem_routine`, which ensures
-/// safety.
-///
-unsafe extern "C" fn datagram_received_workitem_routine_unsafe(context: PVOID) {
-    datagram_received_workitem_routine(context)
-}
-
-///
 /// `datagram_received_workitem_routine` is the callback function for datagram
 /// receive related work items. Its behavior matches the invariant described by
 /// the ExQueueWorkItem call in `receive_from_event_handler`.
@@ -1345,7 +1326,7 @@ unsafe extern "C" fn datagram_received_workitem_routine_unsafe(context: PVOID) {
 /// * `context_ptr` - A valid WorkItemContext pointer, as per the
 ///   ExQueueWorkItem call in `receive_from_event_handler`.
 ///
-fn datagram_received_workitem_routine(context_ptr: PVOID) {
+extern "C" fn datagram_received_workitem_routine(context_ptr: PVOID) {
     if context_ptr.is_null() {
         return;
     }
